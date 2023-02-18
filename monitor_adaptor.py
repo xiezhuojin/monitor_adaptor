@@ -47,17 +47,24 @@ class Zone:
 
 class Airplane:
 
-    def __init__(self, id: str, lng: float, lat: float, alt: float, scale: float,
-                 rotate_x: Optional[float], rotate_y: Optional[float],
-                 rotate_z: Optional[float], name: str) -> None:
+    def __init__(self, id: str, lng: float, lat: float, alt: float, 
+                 track_at: float, name: str) -> None:
         self.id = id
         self.lng = lng
         self.lat = lat
         self.alt = alt
-        self.scale = scale
-        self.rotate_x = rotate_x
-        self.rotate_y = rotate_y
-        self.rotate_z = rotate_z
+        self.track_at = track_at
+        self.name = name
+
+
+class Staff:
+
+    def __init__(self, id: str, lng: float, lat: float, track_at: float,
+                 name: str) -> None:
+        self.id = id
+        self.lng = lng
+        self.lat = lat
+        self.track_at = track_at
         self.name = name
 
 
@@ -99,35 +106,35 @@ class MonitorAdaptor:
     def on_message(self, message) -> None:
         print(message)
 
-    def update_center(self, lng: float, lat: float) -> None:
+    def set_center(self, lng: float, lat: float) -> None:
         message = f"""
             let parameter = new AMap.LngLat({lng}, {lat});
             app.$refs.map.map.setCenter(parameter);
         """
         self.mq.put(message)
 
-    def update_zooms(self, zoom_min: float, zoom_max: float) -> None:
+    def set_zooms(self, zoom_min: float, zoom_max: float) -> None:
         message = f"""
             let parameter = [{zoom_min}, {zoom_max}];
             app.$refs.map.map.setZooms(parameter);
         """
         self.mq.put(message)
 
-    def update_zoom(self, zoom: float) -> None:
+    def set_zoom(self, zoom: float) -> None:
         message = f"""
             let parameter = {zoom};
             app.$refs.map.map.setZoom(parameter);
         """
         self.mq.put(message)
 
-    def update_pitch(self, pitch: float) -> None:
+    def set_pitch(self, pitch: float) -> None:
         message = f"""
             let parameter = {pitch};
             app.$refs.map.map.setPitch(parameter);
         """
         self.mq.put(message)
 
-    def update_limit_bounds(self, south_west_lng: float, south_west_lat: float,
+    def set_limit_bounds(self, south_west_lng: float, south_west_lat: float,
                          north_east_lng: float, north_east_lat: float) -> None:
         message = f"""
             let parameter =  new AMap.Bounds(
@@ -175,11 +182,11 @@ class MonitorAdaptor:
         message = f"""
             let parameter = {get_parameter()};
             let ids = [{",".join([f"'{k}'" for k in self.tracks.keys()])}]
-            app.$refs.map.trackLines.updateTracks(parameter, ids);
+            app.$refs.map.trackLines.show(parameter, ids);
         """
         self.mq.put(message)
 
-    def update_device(self, device: Device) -> None:
+    def add_or_update_device(self, device: Device) -> None:
         message = f"""
             let parameter = {{
                 id: "{device.id}",
@@ -190,7 +197,7 @@ class MonitorAdaptor:
                     functional: {"true" if device.functional else "false"},
                 }}
             }}
-            app.$refs.map.devices.updateDevice(parameter);
+            app.$refs.map.devices.addOrUpdate(parameter);
         """
         self.mq.put(message)
 
@@ -202,7 +209,7 @@ class MonitorAdaptor:
         """
         self.mq.put(message)
 
-    def update_zone(self, zone: Zone) -> None:
+    def add_or_update_zone(self, zone: Zone) -> None:
         paths = []
         for shape in zone.path:
             path = []
@@ -221,7 +228,7 @@ class MonitorAdaptor:
                 height: {zone.height},
                 color: "{zone.color}",
             }};
-            app.$refs.map.zones.updateZone(parameter);
+            app.$refs.map.zones.addOrUpdate(parameter);
         """
         self.mq.put(message)
 
@@ -233,6 +240,80 @@ class MonitorAdaptor:
         """
         self.mq.put(message)
 
+    def add_or_update_staff(self, staff: Staff) -> None:
+        message = f"""
+            let parameter = {{
+                id: "{staff.id}",
+                position: new AMap.LngLat({staff.lng}, {staff.lat}),
+
+                extraInfo: {{
+                    name: "{staff.name}",
+                }}
+            }};
+            app.$refs.map.staffs.addOrUpdate(parameter);
+        """
+        self.mq.put(message)
+
+    def toggle_staff_visibility(self, visibility: bool) -> None:
+        message = f"""
+            let parameter = {"true" if visibility else "false"};
+            app.$refs.map.staffs.toggleVisibility(parameter);
+        """
+        self.mq.put(message)
+
+    def update_airplane(self, airplane: Airplane, clear_timeout=5):
+        if airplane.id not in self.airplanes.keys():
+            self.airplanes[airplane.id] = airplane
+            rotate_x = None
+            rotate_y = None
+            rotate_z = None
+        else:
+            last = self.airplanes[airplane.id]
+            self.airplanes[airplane.id] = airplane
+            rotate_x = 1
+            rotate_y = 2
+            rotate_z = 3
+
+        latest_track_at = airplane.track_at
+        self.airplanes = {k: v for k, v in self.airplanes.items()
+                          if latest_track_at - v.track_at <= clear_timeout}
+
+        scale = 1000
+        airplanesToShow = []
+        for airplaneToShow in self.airplanes.values():
+            if airplaneToShow.id == airplane.id:
+                airplanesToShow.append(f"""{{
+                    position: new AMap.LngLat({airplaneToShow.lng}, {airplaneToShow.lat}),
+                    height: {airplaneToShow.alt},
+                    scale: {scale},
+                    rotateX: {rotate_x if rotate_x else "null"},
+                    rotateY: {rotate_y if rotate_y else "null"},
+                    rotateZ: {rotate_z if rotate_z else "null"},
+
+                    extraInfo: {{
+                        name: "{airplaneToShow.name}",
+                    }}
+                }}""")
+            else:
+                airplanesToShow.append(f"""{{
+                    position: new AMap.LngLat({airplaneToShow.lng}, {airplaneToShow.lat}),
+                    height: {airplaneToShow.alt},
+                    scale: {scale},
+                    rotateX: null,
+                    rotateY: null,
+                    rotateZ: null,
+
+                    extraInfo: {{
+                        name: "{airplaneToShow.name}",
+                    }}
+                }}""")
+        
+        message = f"""
+            let parameter = [{",".join(airplanesToShow)}];
+            app.$refs.map.airplanes.show(parameter);
+        """
+        self.mq.put(message)
+        
 
 if __name__ == "__main__":
     from time import sleep
@@ -256,36 +337,54 @@ if __name__ == "__main__":
 
     monitor_adaptor = MonitorAdaptor(lambda: print("hi"))
 
-    monitor_adaptor.update_center(113.306646, 23.383048)
+    monitor_adaptor.set_center(113.306646, 23.383048)
     sleep(0.5)
-    monitor_adaptor.update_zooms(8, 16)
+    monitor_adaptor.set_zooms(8, 16)
     sleep(0.5)
-    monitor_adaptor.update_zoom(14)
+    monitor_adaptor.set_zoom(14)
     sleep(0.5)
-    monitor_adaptor.update_pitch(70)
+    monitor_adaptor.set_pitch(70)
     sleep(0.5)
-    monitor_adaptor.update_limit_bounds(113.271213, 23.362449, 113.341422, 23.416018)
+    monitor_adaptor.set_limit_bounds(113.271213, 23.362449, 113.341422, 23.416018)
     sleep(0.5)
-    monitor_adaptor.update_device(Device("1", "horn", 113.306646, 23.383048, "horn1", True))
-    sleep(2)
-    monitor_adaptor.update_device(Device("1", "horn", 113.307646, 23.384048, "horn1", False))
-    sleep(1)
+
+    monitor_adaptor.add_or_update_device(Device("1", "horn", 113.306646, 23.383048, "horn1", True))
+    sleep(0.5)
+    monitor_adaptor.add_or_update_device(Device("1", "horn", 113.307646, 23.384048, "horn1", False))
+    sleep(0.5)
     monitor_adaptor.set_device_visibility_by_type("horn", False)
     sleep(0.5)
-    monitor_adaptor.update_zone(Zone("1", "danger",
+    monitor_adaptor.set_device_visibility_by_type("horn", True)
+    sleep(0.5)
+
+    monitor_adaptor.add_or_update_zone(Zone("1", "danger",
                                   [[(113.307706,23.3737), (113.315884,23.371746),
                                     (113.314939,23.36729), (113.307043,23.368054)]],
                                   1000, "#0088ffcc"))
     sleep(0.5)
-    monitor_adaptor.update_zone(Zone("1", "danger",
+    monitor_adaptor.add_or_update_zone(Zone("1", "danger",
                                   [[(113.322407,23.405254), (113.325025,23.40464),
                                     (113.323652,23.400166), (113.316714,23.401668)]],
                                   500, "#0088aacc"))
     sleep(0.5)
     monitor_adaptor.set_zone_visibility_by_type("danger", False)
-    sleep(1)
+    sleep(0.5)
     monitor_adaptor.set_zone_visibility_by_type("danger", True)
     sleep(0.5)
+
+    monitor_adaptor.add_or_update_staff(Staff("1", 113.302352, 23.405924, time(), "员工1"))
+    sleep(0.5)
+    monitor_adaptor.add_or_update_staff(Staff("1", 113.298318,23.382922, time(), "员工1"))
+    sleep(0.5)
+    monitor_adaptor.add_or_update_staff(Staff("2", 113.308102, 23.367401, time(), "员工2"))
+    sleep(1)
+    monitor_adaptor.toggle_staff_visibility(False)
+    sleep(0.5)
+
+    monitor_adaptor.update_airplane(Airplane("1", 113.299038, 23.405184, 200, time(), "南方航空1"))
+    monitor_adaptor.update_airplane(Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
+    sleep(2)
+    monitor_adaptor.update_airplane(Airplane("1", 113.295948, 23.39362, 200, time(), "南方航空1"))
 
     while True:
         tracks = [get_random_track() for i in range(2)]
