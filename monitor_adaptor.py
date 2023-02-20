@@ -1,22 +1,23 @@
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict
 from threading import Thread
 from queue import Queue, Empty
 from time import time
 import asyncio
 
-import websockets
+from websockets import serve
 
 
 class Track:
 
     def __init__(self, id: int, lng: float, lat: float, alt: float, track_at: float,
-                 size: str, danger: str) -> None:
+                 type: str, size: str, danger: str) -> None:
         self.id = id
         self.lng = lng
         self.lat = lat
         self.alt = alt
         self.track_at = track_at
 
+        self.type = type
         self.size = size
         self.danger = danger
 
@@ -34,20 +35,9 @@ class Device:
         self.functional = functional
 
 
-class Zone:
-
-    def __init__(self, id: str, type: str, path: List[List[Tuple[float, float]]],
-                 height: float, color: str) -> None:
-        self.id = id
-        self.type = type
-        self.path = path
-        self.height = height
-        self.color = color
-
-
 class Airplane:
 
-    def __init__(self, id: str, lng: float, lat: float, alt: float, 
+    def __init__(self, id: str, lng: float, lat: float, alt: float,
                  track_at: float, name: str) -> None:
         self.id = id
         self.lng = lng
@@ -56,6 +46,32 @@ class Airplane:
         self.track_at = track_at
         self.name = name
 
+
+class CylinderZone:
+
+    def __init__(self, id: str, type: str, lng: float, lat: float,
+                 radius_in_meter: float, height_in_meter: float) -> None:
+        self.id = id
+        self.type = type
+        self.lng = lng
+        self.lat = lat
+        self.radius_in_meter = radius_in_meter
+        self.height_in_meter = height_in_meter
+
+
+class CuboidZone:
+
+    def __init__(self, id: str, type: str, lng: float, lat: float,
+                 length_in_meter: float, width_in_meter: float,
+                 height_in_meter: float, rotation: float) -> None:
+        self.id = id
+        self.type = type
+        self.lng = lng
+        self.lat = lat
+        self.length_in_meter = length_in_meter
+        self.width_in_meter = width_in_meter
+        self.height_in_meter = height_in_meter
+        self.rotation = rotation
 
 class Staff:
 
@@ -83,7 +99,7 @@ class MonitorAdaptor:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        ws_server = websockets.serve(self.serve, "localhost", 9000)
+        ws_server = serve(self.serve, "localhost", 9000)
         loop.run_until_complete(ws_server)
         loop.run_forever()
         loop.close()
@@ -150,7 +166,7 @@ class MonitorAdaptor:
             if track.id not in self.tracks.keys():
                 self.tracks[track.id] = []
             self.tracks[track.id].append(track)
-        
+
         latest_track_at = max(tracks, key=lambda t: t.track_at).track_at
         for id in self.tracks.keys():
             self.tracks[id] = [track for track in self.tracks[id]
@@ -163,16 +179,18 @@ class MonitorAdaptor:
                 positions = []
                 heights = []
                 for track in tracks:
-                    positions.append(f"new AMap.LngLat({track.lng}, {track.lat})")
+                    positions.append(
+                        f"new AMap.LngLat({track.lng}, {track.lat})")
                     heights.append(f"{track.alt}")
                 positions = f"[{', '.join(positions)}]"
                 heights = f"[{', '.join(heights)}]"
                 track_line = f"""{{
                     positions: {positions},
                     heights: {heights},
-                    extra_info: {{
-                        size: {track.size},
-                        danger: {track.danger},
+                    extraInfo: {{
+                        type: "{track.type}",
+                        size: "{track.size}",
+                        danger: "{track.danger}",
                     }}
                 }}"""
                 track_lines.append(track_line)
@@ -209,33 +227,42 @@ class MonitorAdaptor:
         """
         self.mq.put(message)
 
-    def add_or_update_zone(self, zone: Zone) -> None:
-        paths = []
-        for shape in zone.path:
-            path = []
-            for s in shape:
-                path.append(f"new AMap.LngLat({s[0]}, {s[1]})")
-            path = f"[{','.join(path)}]"
-            paths.append(path)
-        paths = f"[{','.join(paths)}]"
-
-        path = ",".join([f"new AMap.LngLat({p[0]}, {p[1]})" for p in zone.path])
+    def add_cuboid_zone(self, cuboid_zone: CuboidZone) -> None:
         message = f"""
             let parameter = {{
-                id: "{zone.id}",
-                type: "{zone.type}",
-                path: {paths},
-                height: {zone.height},
-                color: "{zone.color}",
-            }};
-            app.$refs.map.zones.addOrUpdate(parameter);
+                id: "{cuboid_zone.id}",
+                type: "{cuboid_zone.type}",
+                position: new AMap.LngLat({cuboid_zone.lng}, {cuboid_zone.lat}),
+                lengthInMeter: {cuboid_zone.length_in_meter},
+                widthInMeter: {cuboid_zone.width_in_meter},
+                heightInMeter: {cuboid_zone.height_in_meter},
+                rotation: {cuboid_zone.rotation},
+            }}
+            app.$refs.map.zones.addCuboid(parameter);
         """
         self.mq.put(message)
 
-    def set_zone_visibility_by_type(self, type: str, visibility: bool) -> None:
+    def add_cylinder_zone(self, cylinder_zone: CylinderZone) -> None:
         message = f"""
-            app.$refs.map.zones.setVisibilityByType(
-                "{type}", {"true" if visibility else "false"}
+            let parameter = {{
+                id: "{cylinder_zone.id}",
+                type: "{cylinder_zone.type}",
+                position: new AMap.LngLat({cylinder_zone.lng}, {cylinder_zone.lat}),
+                radiusInMeter: {cylinder_zone.radius_in_meter},
+                heightInMeter: {cylinder_zone.height_in_meter},
+            }}
+            app.$refs.map.zones.addCylinder(parameter);
+        """
+        self.mq.put(message)
+
+    def toggle_zones_visibility_by_types_and_ids(
+            self, types: List[str], ids: List[str], visibility: bool
+        ) -> None:
+        message = f"""
+            app.$refs.map.zones.toggleZonesVisibilityByTypesAndIds(
+                [{",".join([f"'{type}'" for type in types])}],
+                [{",".join([f"'{id}'" for id in ids])}],
+                {"true" if visibility else "false"}
             );
         """
         self.mq.put(message)
@@ -307,15 +334,15 @@ class MonitorAdaptor:
                         name: "{airplaneToShow.name}",
                     }}
                 }}""")
-        
+
         message = f"""
             let parameter = [{",".join(airplanesToShow)}];
             app.$refs.map.airplanes.show(parameter);
         """
         self.mq.put(message)
-        
 
-if __name__ == "__main__":
+
+def test():
     from time import sleep
     import random
 
@@ -325,15 +352,18 @@ if __name__ == "__main__":
         east = 113.341422
         north = 23.416018
 
-        id = random.randint(1, 2)
-        lng = random.randrange(int(west * 1_000_000), int(east * 1_000_000)) / 1_000_000
-        lat = random.randrange(int(south * 1_000_000), int(north * 1_000_000)) / 1_000_000
+        id = random.randint(1, 10)
+        lng = random.randrange(int(west * 1_000_000),
+                               int(east * 1_000_000)) / 1_000_000
+        lat = random.randrange(int(south * 1_000_000),
+                               int(north * 1_000_000)) / 1_000_000
         alt = random.randint(50, 5000)
         track_at = int(time())
-        size = random.choice(["'小型'", "'中型'", "'大型'"])
-        danger = random.choice(["'低威'", "'中威'", "'高威'"])
+        type = random.choice(["无人机", "鸟"])
+        size = random.choice(["小型", "中型", "大型"])
+        danger = random.choice(["低威", "中威", "高威"])
 
-        return Track(id, lng, lat, alt, track_at, size, danger)
+        return Track(id, lng, lat, alt, track_at, type, size, danger)
 
     monitor_adaptor = MonitorAdaptor(lambda: print("hi"))
 
@@ -345,48 +375,54 @@ if __name__ == "__main__":
     sleep(0.5)
     monitor_adaptor.set_pitch(70)
     sleep(0.5)
-    monitor_adaptor.set_limit_bounds(113.271213, 23.362449, 113.341422, 23.416018)
+    monitor_adaptor.set_limit_bounds(
+        113.271213, 23.362449, 113.341422, 23.416018)
     sleep(0.5)
 
-    monitor_adaptor.add_or_update_device(Device("1", "horn", 113.306646, 23.383048, "horn1", True))
+    monitor_adaptor.add_or_update_device(
+        Device("1", "horn", 113.306646, 23.383048, "horn1", True))
     sleep(0.5)
-    monitor_adaptor.add_or_update_device(Device("1", "horn", 113.307646, 23.384048, "horn1", False))
+    monitor_adaptor.add_or_update_device(
+        Device("1", "horn", 113.307646, 23.384048, "horn1", False))
     sleep(0.5)
     monitor_adaptor.set_device_visibility_by_type("horn", False)
     sleep(0.5)
     monitor_adaptor.set_device_visibility_by_type("horn", True)
     sleep(0.5)
 
-    monitor_adaptor.add_or_update_zone(Zone("1", "danger",
-                                  [[(113.307706,23.3737), (113.315884,23.371746),
-                                    (113.314939,23.36729), (113.307043,23.368054)]],
-                                  1000, "#0088ffcc"))
+    monitor_adaptor.add_cylinder_zone(CylinderZone("跑道1", "预警区", 113.306646, 23.383048, 10000, 2000))
     sleep(0.5)
-    monitor_adaptor.add_or_update_zone(Zone("1", "danger",
-                                  [[(113.322407,23.405254), (113.325025,23.40464),
-                                    (113.323652,23.400166), (113.316714,23.401668)]],
-                                  500, "#0088aacc"))
+    monitor_adaptor.add_cuboid_zone(CuboidZone("跑道1", "危险区", 113.306646, 23.383048, 3000, 60, 100, 19))
     sleep(0.5)
-    monitor_adaptor.set_zone_visibility_by_type("danger", False)
-    sleep(0.5)
-    monitor_adaptor.set_zone_visibility_by_type("danger", True)
+    monitor_adaptor.toggle_zones_visibility_by_types_and_ids(["预警区",], ["跑道1"], False)
+    sleep(1)
+    monitor_adaptor.toggle_zones_visibility_by_types_and_ids(["预警区",], ["跑道1"], True)
     sleep(0.5)
 
-    monitor_adaptor.add_or_update_staff(Staff("1", 113.302352, 23.405924, time(), "员工1"))
+    monitor_adaptor.add_or_update_staff(
+        Staff("1", 113.302352, 23.405924, time(), "员工1"))
     sleep(0.5)
-    monitor_adaptor.add_or_update_staff(Staff("1", 113.298318,23.382922, time(), "员工1"))
+    monitor_adaptor.add_or_update_staff(
+        Staff("1", 113.298318, 23.382922, time(), "员工1"))
     sleep(0.5)
-    monitor_adaptor.add_or_update_staff(Staff("2", 113.308102, 23.367401, time(), "员工2"))
+    monitor_adaptor.add_or_update_staff(
+        Staff("2", 113.308102, 23.367401, time(), "员工2"))
     sleep(1)
     monitor_adaptor.toggle_staff_visibility(False)
     sleep(0.5)
 
-    monitor_adaptor.update_airplane(Airplane("1", 113.299038, 23.405184, 200, time(), "南方航空1"))
-    monitor_adaptor.update_airplane(Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
-    sleep(2)
-    monitor_adaptor.update_airplane(Airplane("1", 113.295948, 23.39362, 200, time(), "南方航空1"))
+    # monitor_adaptor.update_airplane(
+    #     Airplane("1", 113.299038, 23.405184, 200, time(), "南方航空1"))
+    # monitor_adaptor.update_airplane(
+    #     Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
+    # sleep(2)
+    # monitor_adaptor.update_airplane(
+    #     Airplane("1", 113.295948, 23.39362, 200, time(), "南方航空1"))
 
     while True:
-        tracks = [get_random_track() for i in range(2)]
+        tracks = [get_random_track() for i in range(10)]
         monitor_adaptor.update_track(tracks)
         sleep(1)
+
+if __name__ == "__main__":
+    test()
