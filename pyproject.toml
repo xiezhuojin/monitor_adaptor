@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "monitor-adaptor"
+version = "0.1.0"
+description = ""
+authors = ["hehaiping <1293460561@qq.com>"]
+readme = "README.md"
+packages = [{include = "monitor_adaptor"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+websockets = "^10.4"
+geographiclib = "^2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

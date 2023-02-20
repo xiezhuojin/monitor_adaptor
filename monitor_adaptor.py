@@ -2,15 +2,17 @@ from typing import List, Dict
 from threading import Thread
 from queue import Queue, Empty
 from time import time
+from math import atan2, degrees
 import asyncio
 
 from websockets import serve
+from geographiclib.geodesic import Geodesic
 
 
 class Track:
 
     def __init__(self, id: int, lng: float, lat: float, alt: float, track_at: float,
-                 type: str, size: str, danger: str) -> None:
+                 type: str, size: str) -> None:
         self.id = id
         self.lng = lng
         self.lat = lat
@@ -19,7 +21,6 @@ class Track:
 
         self.type = type
         self.size = size
-        self.danger = danger
 
 
 class Device:
@@ -190,7 +191,6 @@ class MonitorAdaptor:
                     extraInfo: {{
                         type: "{track.type}",
                         size: "{track.size}",
-                        danger: "{track.danger}",
                     }}
                 }}"""
                 track_lines.append(track_line)
@@ -288,7 +288,7 @@ class MonitorAdaptor:
         """
         self.mq.put(message)
 
-    def update_airplane(self, airplane: Airplane, clear_timeout=5):
+    def update_airplane(self, airplane: Airplane, clear_timeout=10):
         if airplane.id not in self.airplanes.keys():
             self.airplanes[airplane.id] = airplane
             rotate_x = None
@@ -297,15 +297,16 @@ class MonitorAdaptor:
         else:
             last = self.airplanes[airplane.id]
             self.airplanes[airplane.id] = airplane
-            rotate_x = 1
-            rotate_y = 2
-            rotate_z = 3
+            result = Geodesic.WGS84.Inverse(last.lat, last.lng, airplane.lat, airplane.lng)
+            rotate_x = degrees(atan2(airplane.alt - last.alt, result["s12"]))
+            rotate_y = None
+            rotate_z = result["azi2"]
 
         latest_track_at = airplane.track_at
         self.airplanes = {k: v for k, v in self.airplanes.items()
                           if latest_track_at - v.track_at <= clear_timeout}
 
-        scale = 1000
+        scale = 40
         airplanesToShow = []
         for airplaneToShow in self.airplanes.values():
             if airplaneToShow.id == airplane.id:
@@ -361,9 +362,8 @@ def test():
         track_at = int(time())
         type = random.choice(["无人机", "鸟"])
         size = random.choice(["小型", "中型", "大型"])
-        danger = random.choice(["低威", "中威", "高威"])
 
-        return Track(id, lng, lat, alt, track_at, type, size, danger)
+        return Track(id, lng, lat, alt, track_at, type, size)
 
     monitor_adaptor = MonitorAdaptor(lambda: print("hi"))
 
@@ -411,17 +411,24 @@ def test():
     monitor_adaptor.toggle_staff_visibility(False)
     sleep(0.5)
 
-    # monitor_adaptor.update_airplane(
-    #     Airplane("1", 113.299038, 23.405184, 200, time(), "南方航空1"))
-    # monitor_adaptor.update_airplane(
-    #     Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
-    # sleep(2)
-    # monitor_adaptor.update_airplane(
-    #     Airplane("1", 113.295948, 23.39362, 200, time(), "南方航空1"))
+    monitor_adaptor.update_airplane(
+        Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
+    sleep(0.5)
+    positions = [
+        (113.313181, 23.367334, 200),
+        (113.315928, 23.377513, 400),
+        (113.317959, 23.384868, 600),
+        (113.320491, 23.393707, 800),
+        (113.308003, 23.402057, 1000),
+    ]
+    for position in positions:
+        monitor_adaptor.update_airplane(
+            Airplane("1", position[0], position[1], position[2], time(), "南方航空1"))
+        sleep(0.5)
 
     while True:
         tracks = [get_random_track() for i in range(10)]
-        monitor_adaptor.update_track(tracks)
+        # monitor_adaptor.update_track(tracks)
         sleep(1)
 
 if __name__ == "__main__":
