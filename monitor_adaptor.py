@@ -2,7 +2,7 @@ from typing import List, Dict
 from threading import Thread
 from queue import Queue, Empty
 from time import time
-from math import atan2, degrees
+from math import atan2, degrees, sqrt, pow
 import asyncio
 
 from websockets import serve
@@ -187,7 +187,7 @@ class MonitorAdaptor:
                 heights = f"[{', '.join(heights)}]"
                 track_line = f"""{{
                     positions: {positions},
-                    heights: {heights},
+                    heightsInMeter: {heights},
                     extraInfo: {{
                         type: "{track.type}",
                         size: "{track.size}",
@@ -228,15 +228,39 @@ class MonitorAdaptor:
         self.mq.put(message)
 
     def add_cuboid_zone(self, cuboid_zone: CuboidZone) -> None:
+        deviation = degrees(atan2(cuboid_zone.width_in_meter, cuboid_zone.length_in_meter))
+        azimuths = [
+            cuboid_zone.rotation - deviation,
+            cuboid_zone.rotation + deviation,
+            cuboid_zone.rotation + 180 - deviation,
+            cuboid_zone.rotation + 180 + deviation,
+        ]
+        diagonal = sqrt(
+            pow(cuboid_zone.length_in_meter, 2) + pow(cuboid_zone.width_in_meter, 2)
+        ) / 2
+        positions = []
+        for i in range(4):
+            position = Geodesic.WGS84.Direct(cuboid_zone.lat, cuboid_zone.lng,
+                                             azimuths[i], diagonal)
+            positions.append((position["lon2"], position["lat2"]))
+        # positions = [
+        #     (113.321985,23.405358),
+        #     (113.324823,23.404683),
+        #     (113.323649,23.400223),
+        #     (113.320832,23.400927)
+        # ]
+        positions = f"""[
+            new AMap.LngLat({positions[0][0]}, {positions[0][1]}),
+            new AMap.LngLat({positions[1][0]}, {positions[1][1]}),
+            new AMap.LngLat({positions[2][0]}, {positions[2][1]}),
+            new AMap.LngLat({positions[3][0]}, {positions[3][1]}),
+        ]"""
         message = f"""
             let parameter = {{
                 id: "{cuboid_zone.id}",
                 type: "{cuboid_zone.type}",
-                position: new AMap.LngLat({cuboid_zone.lng}, {cuboid_zone.lat}),
-                lengthInMeter: {cuboid_zone.length_in_meter},
-                widthInMeter: {cuboid_zone.width_in_meter},
+                positions: {positions},
                 heightInMeter: {cuboid_zone.height_in_meter},
-                rotation: {cuboid_zone.rotation},
             }}
             app.$refs.map.zones.addCuboid(parameter);
         """
@@ -312,7 +336,7 @@ class MonitorAdaptor:
             if airplaneToShow.id == airplane.id:
                 airplanesToShow.append(f"""{{
                     position: new AMap.LngLat({airplaneToShow.lng}, {airplaneToShow.lat}),
-                    height: {airplaneToShow.alt},
+                    heightInMeter: {airplaneToShow.alt},
                     scale: {scale},
                     rotateX: {rotate_x if rotate_x else "null"},
                     rotateY: {rotate_y if rotate_y else "null"},
@@ -358,7 +382,7 @@ def test():
                                int(east * 1_000_000)) / 1_000_000
         lat = random.randrange(int(south * 1_000_000),
                                int(north * 1_000_000)) / 1_000_000
-        alt = random.randint(50, 5000)
+        alt = random.randint(50, 500)
         track_at = int(time())
         type = random.choice(["无人机", "鸟"])
         size = random.choice(["小型", "中型", "大型"])
@@ -390,9 +414,9 @@ def test():
     monitor_adaptor.set_device_visibility_by_type("horn", True)
     sleep(0.5)
 
-    monitor_adaptor.add_cylinder_zone(CylinderZone("跑道1", "预警区", 113.306646, 23.383048, 10000, 2000))
+    monitor_adaptor.add_cylinder_zone(CylinderZone("跑道1", "预警区", 113.2931433608091, 23.39001427231171, 1800, 100))
     sleep(0.5)
-    monitor_adaptor.add_cuboid_zone(CuboidZone("跑道1", "危险区", 113.306646, 23.383048, 3000, 60, 100, 19))
+    monitor_adaptor.add_cuboid_zone(CuboidZone("跑道1", "危险区", 113.31768691397997, 23.38354820915081, 3800, 60, 100, 13.6))
     sleep(0.5)
     monitor_adaptor.toggle_zones_visibility_by_types_and_ids(["预警区",], ["跑道1"], False)
     sleep(1)
@@ -428,7 +452,7 @@ def test():
 
     while True:
         tracks = [get_random_track() for i in range(10)]
-        # monitor_adaptor.update_track(tracks)
+        monitor_adaptor.update_track(tracks)
         sleep(1)
 
 if __name__ == "__main__":
