@@ -85,7 +85,7 @@ class Staff:
         self.name = name
 
 
-class MonitorAdaptor:
+class SceneAdaptor:
 
     def __init__(self, device_clicked_handler: callable([[object, object], None])) -> None:
         self.device_clicked_handler = device_clicked_handler
@@ -389,7 +389,7 @@ def test():
 
         return Track(id, lng, lat, alt, track_at, type, size)
 
-    monitor_adaptor = MonitorAdaptor(lambda: print("hi"))
+    monitor_adaptor = SceneAdaptor(lambda: print("hi"))
 
     monitor_adaptor.set_center(113.306646, 23.383048)
     sleep(0.5)
