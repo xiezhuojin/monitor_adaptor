@@ -12,7 +12,7 @@ from geographiclib.geodesic import Geodesic
 
 class Track:
 
-    def __init__(self, id: int, lng: float, lat: float, alt: float, track_at: float,
+    def __init__(self, id: str, lng: float, lat: float, alt: float, track_at: float,
                  type: str, size: str) -> None:
         self.id = id
         self.lng = lng
@@ -391,8 +391,8 @@ def test():
                                int(north * 1_000_000)) / 1_000_000
         alt = random.randint(50, 500)
         track_at = int(time())
-        type = random.choice(["无人机", "鸟"])
-        size = random.choice(["小型", "中型", "大型"])
+        type = random.choice(["drone", "bird"])
+        size = random.choice(["small", "intermediate", "large"])
 
         return Track(id, lng, lat, alt, track_at, type, size)
 
@@ -465,7 +465,7 @@ def test():
     while True:
         tracks = [get_random_track() for i in range(10)]
         scene_adaptor.update_track(tracks)
-        sleep(1)
+        sleep(5)
 
 if __name__ == "__main__":
     test()
