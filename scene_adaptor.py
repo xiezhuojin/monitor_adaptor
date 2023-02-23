@@ -1,9 +1,10 @@
-from typing import List, Dict
+from typing import List, Dict, Callable, Tuple
 from threading import Thread
 from queue import Queue, Empty
 from time import time
 from math import atan2, degrees, sqrt, pow
 import asyncio
+import json
 
 from websockets import serve
 from geographiclib.geodesic import Geodesic
@@ -87,7 +88,7 @@ class Staff:
 
 class SceneAdaptor:
 
-    def __init__(self, device_clicked_handler: callable([[object, object], None])) -> None:
+    def __init__(self, device_clicked_handler: Callable[[Dict], None]) -> None:
         self.device_clicked_handler = device_clicked_handler
 
         self.mq = Queue()
@@ -121,7 +122,11 @@ class SceneAdaptor:
                 await websocket.send(message)
 
     def on_message(self, message) -> None:
-        print(message)
+        message = json.loads(message)
+        event = message["event"]
+        data = message["data"]
+        if event == "deviceClicked":
+            self.device_clicked_handler(data)
 
     def set_center(self, lng: float, lat: float) -> None:
         message = f"""
@@ -204,6 +209,13 @@ class SceneAdaptor:
         """
         self.mq.put(message)
 
+    def set_track_marker_visibility(self, visibility: bool) -> None:
+        message = f"""
+            let parameter = {'true' if visibility else 'false'};
+            app.$refs.map.trackLines.setMarkerVisibility(parameter);
+        """
+        self.mq.put(message)
+
     def add_or_update_device(self, device: Device) -> None:
         message = f"""
             let parameter = {{
@@ -227,7 +239,8 @@ class SceneAdaptor:
         """
         self.mq.put(message)
 
-    def add_cuboid_zone(self, cuboid_zone: CuboidZone) -> None:
+    def add_cuboid_zone(self, cuboid_zone: CuboidZone,
+                        color: Tuple[float, float, float, float]) -> None:
         deviation = degrees(atan2(cuboid_zone.width_in_meter, cuboid_zone.length_in_meter))
         azimuths = [
             cuboid_zone.rotation - deviation,
@@ -243,12 +256,6 @@ class SceneAdaptor:
             position = Geodesic.WGS84.Direct(cuboid_zone.lat, cuboid_zone.lng,
                                              azimuths[i], diagonal)
             positions.append((position["lon2"], position["lat2"]))
-        # positions = [
-        #     (113.321985,23.405358),
-        #     (113.324823,23.404683),
-        #     (113.323649,23.400223),
-        #     (113.320832,23.400927)
-        # ]
         positions = f"""[
             new AMap.LngLat({positions[0][0]}, {positions[0][1]}),
             new AMap.LngLat({positions[1][0]}, {positions[1][1]}),
@@ -256,36 +263,36 @@ class SceneAdaptor:
             new AMap.LngLat({positions[3][0]}, {positions[3][1]}),
         ]"""
         message = f"""
-            let parameter = {{
+            let cuboid = {{
                 id: "{cuboid_zone.id}",
                 type: "{cuboid_zone.type}",
                 positions: {positions},
                 heightInMeter: {cuboid_zone.height_in_meter},
             }}
-            app.$refs.map.zones.addCuboid(parameter);
+            let color = [{color[0]}, {color[1]}, {color[2]}, {color[3]}];
+            app.$refs.map.zones.addCuboid(cuboid, color);
         """
         self.mq.put(message)
 
-    def add_cylinder_zone(self, cylinder_zone: CylinderZone) -> None:
+    def add_cylinder_zone(self, cylinder_zone: CylinderZone,
+                          color: Tuple[float, float, float, float]) -> None:
         message = f"""
-            let parameter = {{
+            let cylinder = {{
                 id: "{cylinder_zone.id}",
                 type: "{cylinder_zone.type}",
                 position: new AMap.LngLat({cylinder_zone.lng}, {cylinder_zone.lat}),
                 radiusInMeter: {cylinder_zone.radius_in_meter},
                 heightInMeter: {cylinder_zone.height_in_meter},
             }}
-            app.$refs.map.zones.addCylinder(parameter);
+            let color = [{color[0]}, {color[1]}, {color[2]}, {color[3]}];
+            app.$refs.map.zones.addCylinder(cylinder, color);
         """
         self.mq.put(message)
 
-    def toggle_zones_visibility_by_types_and_ids(
-            self, types: List[str], ids: List[str], visibility: bool
-        ) -> None:
+    def set_zones_visibility_by_type(self, type: str, visibility: bool) -> None:
         message = f"""
-            app.$refs.map.zones.toggleZonesVisibilityByTypesAndIds(
-                [{",".join([f"'{type}'" for type in types])}],
-                [{",".join([f"'{id}'" for id in ids])}],
+            app.$refs.map.zones.setVisibilityByTypes(
+                "{type}",
                 {"true" if visibility else "false"}
             );
         """
@@ -305,10 +312,10 @@ class SceneAdaptor:
         """
         self.mq.put(message)
 
-    def toggle_staff_visibility(self, visibility: bool) -> None:
+    def set_staff_visibility(self, visibility: bool) -> None:
         message = f"""
             let parameter = {"true" if visibility else "false"};
-            app.$refs.map.staffs.toggleVisibility(parameter);
+            app.$refs.map.staffs.setVisibility(parameter);
         """
         self.mq.put(message)
 
@@ -389,53 +396,57 @@ def test():
 
         return Track(id, lng, lat, alt, track_at, type, size)
 
-    monitor_adaptor = SceneAdaptor(lambda: print("hi"))
+    scene_adaptor = SceneAdaptor(lambda: print("hi"))
 
-    monitor_adaptor.set_center(113.306646, 23.383048)
+    scene_adaptor.set_center(113.306646, 23.383048)
     sleep(0.5)
-    monitor_adaptor.set_zooms(8, 16)
+    scene_adaptor.set_zooms(8, 16)
     sleep(0.5)
-    monitor_adaptor.set_zoom(14)
+    scene_adaptor.set_zoom(14)
     sleep(0.5)
-    monitor_adaptor.set_pitch(70)
+    scene_adaptor.set_pitch(70)
     sleep(0.5)
-    monitor_adaptor.set_limit_bounds(
+    scene_adaptor.set_limit_bounds(
         113.271213, 23.362449, 113.341422, 23.416018)
     sleep(0.5)
 
-    monitor_adaptor.add_or_update_device(
+    scene_adaptor.add_or_update_device(
         Device("1", "horn", 113.306646, 23.383048, "horn1", True))
     sleep(0.5)
-    monitor_adaptor.add_or_update_device(
+    scene_adaptor.add_or_update_device(
         Device("1", "horn", 113.307646, 23.384048, "horn1", False))
     sleep(0.5)
-    monitor_adaptor.set_device_visibility_by_type("horn", False)
+    scene_adaptor.set_device_visibility_by_type("horn", False)
     sleep(0.5)
-    monitor_adaptor.set_device_visibility_by_type("horn", True)
+    scene_adaptor.set_device_visibility_by_type("horn", True)
     sleep(0.5)
 
-    monitor_adaptor.add_cylinder_zone(CylinderZone("跑道1", "预警区", 113.2931433608091, 23.39001427231171, 1800, 100))
+    scene_adaptor.add_cylinder_zone(
+        CylinderZone("跑道1", "预警区", 113.2931433608091, 23.39001427231171, 1800, 100),
+        (0.8, 0, 0, 0.5))
     sleep(0.5)
-    monitor_adaptor.add_cuboid_zone(CuboidZone("跑道1", "危险区", 113.31768691397997, 23.38354820915081, 3800, 60, 100, 13.6))
+    scene_adaptor.add_cuboid_zone(
+        CuboidZone("跑道1", "危险区", 113.31768691397997, 23.38354820915081, 3800, 60, 100, 13.6),
+        (0, 0.8, 0, 0.5))
     sleep(0.5)
-    monitor_adaptor.toggle_zones_visibility_by_types_and_ids(["预警区",], ["跑道1"], False)
+    scene_adaptor.set_zones_visibility_by_type("预警区", False)
     sleep(1)
-    monitor_adaptor.toggle_zones_visibility_by_types_and_ids(["预警区",], ["跑道1"], True)
+    scene_adaptor.set_zones_visibility_by_type("预警区", True)
     sleep(0.5)
 
-    monitor_adaptor.add_or_update_staff(
+    scene_adaptor.add_or_update_staff(
         Staff("1", 113.302352, 23.405924, time(), "员工1"))
     sleep(0.5)
-    monitor_adaptor.add_or_update_staff(
+    scene_adaptor.add_or_update_staff(
         Staff("1", 113.298318, 23.382922, time(), "员工1"))
     sleep(0.5)
-    monitor_adaptor.add_or_update_staff(
+    scene_adaptor.add_or_update_staff(
         Staff("2", 113.308102, 23.367401, time(), "员工2"))
     sleep(1)
-    monitor_adaptor.toggle_staff_visibility(False)
+    scene_adaptor.set_staff_visibility(False)
     sleep(0.5)
 
-    monitor_adaptor.update_airplane(
+    scene_adaptor.update_airplane(
         Airplane("2", 113.317577, 23.394566, 200, time(), "南方航空2"))
     sleep(0.5)
     positions = [
@@ -446,13 +457,14 @@ def test():
         (113.308003, 23.402057, 1000),
     ]
     for position in positions:
-        monitor_adaptor.update_airplane(
+        scene_adaptor.update_airplane(
             Airplane("1", position[0], position[1], position[2], time(), "南方航空1"))
         sleep(0.5)
 
+    scene_adaptor.set_track_marker_visibility(False)
     while True:
         tracks = [get_random_track() for i in range(10)]
-        monitor_adaptor.update_track(tracks)
+        scene_adaptor.update_track(tracks)
         sleep(1)
 
 if __name__ == "__main__":
