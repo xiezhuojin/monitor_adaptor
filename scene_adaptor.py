@@ -289,10 +289,11 @@ class SceneAdaptor:
         """
         self.mq.put(message)
 
-    def set_zones_visibility_by_type(self, type: str, visibility: bool) -> None:
+    def set_zone_visibility_by_type_and_id(self, type: str, id: str,
+                                           visibility: bool) -> None:
         message = f"""
-            app.$refs.map.zones.setVisibilityByTypes(
-                "{type}",
+            app.$refs.map.zones.setVisibilityByTypeAndID(
+                "{type}", "{id}",
                 {"true" if visibility else "false"}
             );
         """
@@ -429,9 +430,9 @@ def test():
         CuboidZone("跑道1", "危险区", 113.31768691397997, 23.38354820915081, 3800, 60, 100, 13.6),
         (0, 0.8, 0, 0.5))
     sleep(0.5)
-    scene_adaptor.set_zones_visibility_by_type("预警区", False)
+    scene_adaptor.set_zone_visibility_by_type_and_id("预警区", "跑道1", False)
     sleep(1)
-    scene_adaptor.set_zones_visibility_by_type("预警区", True)
+    scene_adaptor.set_zone_visibility_by_type_and_id("预警区", "跑道1", True)
     sleep(0.5)
 
     scene_adaptor.add_or_update_staff(

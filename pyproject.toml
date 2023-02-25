@@ -2,7 +2,7 @@
 name = "scene-adaptor"
 version = "0.1.0"
 description = ""
-authors = ["hehaiping <1293460561@qq.com>"]
+authors = ["xiezhuojin <innoveda@hotmail.com>"]
 readme = "README.md"
 packages = [{include = "monitor_adaptor"}]
 
